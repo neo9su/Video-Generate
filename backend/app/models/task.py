@@ -1,5 +1,5 @@
 """Task model for generation tasks."""
-from sqlalchemy import Column, Integer, String, Text, DateTime, Enum as SAEnum
+from sqlalchemy import Column, Integer, String, Text, DateTime, Enum as SAEnum, JSON
 from sqlalchemy.sql import func
 from ..database import Base
 import enum
@@ -19,8 +19,10 @@ class Task(Base):
     user_id = Column(Integer, nullable=False, index=True)
     title = Column(String(255), nullable=False)
     status = Column(SAEnum(TaskStatus), default=TaskStatus.PENDING)
-    prompt_text = Column(Text, nullable=True)
-    params = Column(Text, nullable=True)  # JSON string of parameters
+    progress = Column(Integer, default=0)
+    input_data = Column(JSON, nullable=True)       # product images, description, etc.
+    output_data = Column(JSON, nullable=True)      # generated video URLs, etc.
+    config = Column(JSON, nullable=True)            # style, platform, model settings
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
-    updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

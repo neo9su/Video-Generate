@@ -20,4 +20,5 @@ app.include_router(prompts.router, prefix="/api/v1/prompts", tags=["prompts"])
 
 @app.on_event("startup")
 async def startup():
-    Base.metadata.create_all(bind=engine)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
