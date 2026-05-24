@@ -57,8 +57,23 @@ export async function healthCheck() {
 }
 
 // ─── Auth ──────────────────────────────────────────────────────────────
+export interface UserProfile {
+  id: number
+  email: string
+  name: string
+  is_active: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface AuthResponse {
+  access_token: string
+  token_type: string
+  user: UserProfile
+}
+
 export async function login(email: string, password: string) {
-  const { data } = await api.post('/auth/login', { email, password })
+  const { data } = await api.post<AuthResponse>('/auth/login', { email, password })
   if (data.access_token) {
     setAuthToken(data.access_token)
   }
@@ -66,12 +81,20 @@ export async function login(email: string, password: string) {
 }
 
 export async function register(email: string, password: string, name?: string) {
-  const { data } = await api.post('/auth/register', { email, password, name })
+  const { data } = await api.post<AuthResponse>('/auth/register', { email, password, name })
+  if (data.access_token) {
+    setAuthToken(data.access_token)
+  }
   return data
 }
 
 export async function getProfile() {
-  const { data } = await api.get('/auth/profile')
+  const { data } = await api.get<UserProfile>('/auth/me')
+  return data
+}
+
+export async function updateProfile(name?: string, email?: string) {
+  const { data } = await api.put<UserProfile>('/auth/me', { name, email })
   return data
 }
 
@@ -88,6 +111,8 @@ export interface CreateTaskPayload {
   image_urls?: string[]
   voice_id?: string
   prompt_id?: string
+  highlight_style?: string
+  reference_analysis_id?: string
   settings?: Record<string, unknown>
 }
 
@@ -176,11 +201,12 @@ export async function uploadFile(
 
 // ─── Voices ────────────────────────────────────────────────────────────
 export interface Voice {
-  id: string
+  id: number
   name: string
-  language?: string
-  gender?: string
-  preview_url?: string
+  description?: string
+  voice_type: string
+  file_path?: string
+  is_default: boolean
   created_at?: string
 }
 
@@ -189,13 +215,92 @@ export async function getVoices() {
   return data
 }
 
-export async function cloneVoice(file: File) {
+export async function cloneVoice(file: File, name?: string) {
+  const formData = new FormData()
+  formData.append('file', file)
+  if (name) formData.append('name', name)
+
+  const { data } = await api.post<Voice>('/voices', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+export async function recordVoice(blob: Blob, name?: string) {
+  const formData = new FormData()
+  formData.append('file', blob, 'recorded_voice.webm')
+  if (name) formData.append('name', name)
+
+  const { data } = await api.post<Voice>('/voices/record', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+  return data
+}
+
+export async function deleteVoice(id: number) {
+  const { data } = await api.delete<{ message: string; voice_id: number }>(`/voices/${id}`)
+  return data
+}
+
+// ─── Video Analysis ────────────────────────────────────────────────────
+export interface AnalysisResult {
+  style?: Record<string, unknown>
+  pacing?: Record<string, unknown>
+  scenes?: Array<Record<string, unknown>>
+  colors?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export interface AnalysisResponse {
+  task_id: string
+  status: string
+  result: AnalysisResult
+  message?: string
+}
+
+export async function analyzeVideo(file: File) {
   const formData = new FormData()
   formData.append('file', file)
 
-  const { data } = await api.post<Voice>('/voices/clone', formData, {
+  const { data } = await api.post<AnalysisResponse>('/analysis/reference', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 300000, // 5 min for video analysis
   })
+  return data
+}
+
+export async function getAnalysis(id: string) {
+  const { data } = await api.get<AnalysisResponse>(`/analysis/${id}`)
+  return data
+}
+
+// ─── Highlights ────────────────────────────────────────────────────────
+export interface HighlightResult {
+  highlights?: string[]
+  subtitle_srt?: string
+  subtitle_ass?: string
+  [key: string]: unknown
+}
+
+export async function getHighlights(taskId: string) {
+  const { data } = await api.get<HighlightResult>(`/tasks/${taskId}/highlights`)
+  return data
+}
+
+// ─── Models / ComfyUI ──────────────────────────────────────────────────
+export interface ComfyUIModel {
+  name: string
+  title: string
+  type?: string
+}
+
+export async function getModels() {
+  const { data } = await api.get<ComfyUIModel[]>('/models')
+  return data
+}
+
+export async function getComfyuiStatus() {
+  const { data } = await api.get<{ status: string; queue_remaining?: number }>('/comfyui/status')
   return data
 }
 

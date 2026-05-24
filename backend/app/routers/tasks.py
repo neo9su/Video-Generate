@@ -12,6 +12,7 @@ from ..schemas.task import TaskCreate, TaskResponse, TaskListResponse, TaskStart
 from ..services.llm_service import llm_service
 from ..services.tts_service import tts_service
 from ..services.composition_service import composition_service
+from ..services.highlight_service import highlight_service
 
 router = APIRouter()
 
@@ -157,6 +158,57 @@ async def start_task(
         if task.output_data is None:
             task.output_data = {}
         task.output_data["storyboard"] = storyboard
+        await db.flush()
+
+        # --- Step 2b: Generate highlight subtitles ---
+        try:
+            language = "zh" if any('\u4e00' <= c <= '\u9fff' for c in marketing_copy) else "en"
+            highlight_words = highlight_service.detect_highlight_words(marketing_copy, language=language)
+
+            # Generate SRT subtitles
+            srt_content = highlight_service.generate_srt(storyboard, language=language)
+            srt_path = f"{settings.output_dir}/tasks/{task_id}/subtitles.srt"
+            if srt_content:
+                os.makedirs(os.path.dirname(srt_path), exist_ok=True)
+                with open(srt_path, "w", encoding="utf-8") as f:
+                    f.write(srt_content)
+                if task.output_data is None:
+                    task.output_data = {}
+                task.output_data["subtitle_srt"] = srt_path
+
+            # Generate ASS subtitles with highlight animations
+            ass_content = highlight_service.generate_ass_with_highlights(
+                storyboard, highlights=highlight_words, language=language,
+            )
+            ass_path = f"{settings.output_dir}/tasks/{task_id}/subtitles_highlight.ass"
+            if ass_content:
+                os.makedirs(os.path.dirname(ass_path), exist_ok=True)
+                with open(ass_path, "w", encoding="utf-8") as f:
+                    f.write(ass_content)
+                if task.output_data is None:
+                    task.output_data = {}
+                task.output_data["subtitle_ass"] = ass_path
+                task.output_data["subtitle_highlights"] = highlight_words
+
+            # TikTok-style subtitles for short-form platforms
+            platform = (task.config or {}).get("platform", "tiktok")
+            if platform in ("tiktok", "shorts", "reels"):
+                tiktok_ass = highlight_service.create_tiktok_style_subtitles(storyboard)
+                tiktok_path = f"{settings.output_dir}/tasks/{task_id}/subtitles_tiktok.ass"
+                if tiktok_ass:
+                    os.makedirs(os.path.dirname(tiktok_path), exist_ok=True)
+                    with open(tiktok_path, "w", encoding="utf-8") as f:
+                        f.write(tiktok_ass)
+                    if task.output_data is None:
+                        task.output_data = {}
+                    task.output_data["subtitle_tiktok"] = tiktok_path
+        except Exception as e:
+            # Don't fail the whole task if subtitle generation fails
+            if task.output_data is None:
+                task.output_data = {}
+            task.output_data["subtitle_error"] = str(e)
+
+        task.progress = 60
         await db.flush()
 
         # --- Step 3: Generate narration audio via TTS ---

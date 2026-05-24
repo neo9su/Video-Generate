@@ -9,6 +9,7 @@ import {
   MicrophoneIcon,
   DocumentTextIcon,
   Cog6ToothIcon,
+  ChartBarIcon,
 } from '@heroicons/react/24/outline'
 import { useState } from 'react'
 
@@ -16,6 +17,7 @@ const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
   { name: 'Create Video', href: '/create', icon: DocumentPlusIcon },
   { name: 'Tasks', href: '/tasks', icon: VideoCameraIcon },
+  { name: 'Analysis', href: '/analysis', icon: ChartBarIcon },
   { name: 'Voices', href: '/voices', icon: MicrophoneIcon },
   { name: 'Prompts', href: '/prompts', icon: DocumentTextIcon },
   { name: 'Settings', href: '/settings', icon: Cog6ToothIcon },

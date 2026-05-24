@@ -15,9 +15,11 @@ import {
   AlertCircle,
   CheckCircle2,
   Eye,
+  Video,
+  BarChart3,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { createTask, type CreateTaskPayload, uploadFile } from '@/lib/api'
+import { createTask, type CreateTaskPayload, uploadFile, analyzeVideo, type AnalysisResponse } from '@/lib/api'
 import FileUpload from '@/components/Upload/FileUpload'
 import ConfigPanel from '@/components/ConfigPanel/ConfigPanel'
 import type { ConfigValues } from '@/components/ConfigPanel/ConfigPanel'
@@ -25,13 +27,14 @@ import type { ConfigValues } from '@/components/ConfigPanel/ConfigPanel'
 const steps = [
   { id: 1, title: 'Upload Images', description: 'Drag & drop product images', icon: Upload },
   { id: 2, title: 'Description', description: 'Describe your product', icon: FileText },
-  { id: 3, title: 'Configure', description: 'Set video parameters', icon: Settings2 },
-  { id: 4, title: 'Review & Submit', description: 'Finalize and generate', icon: Send },
+  { id: 3, title: 'Reference Video', description: 'Optional style analysis', icon: Video },
+  { id: 4, title: 'Configure', description: 'Set video parameters', icon: Settings2 },
+  { id: 5, title: 'Review & Submit', description: 'Finalize and generate', icon: Send },
 ]
 
 interface ProgressState {
   show: boolean
-  status: 'preparing' | 'uploading' | 'generating' | 'done' | 'error'
+  status: 'preparing' | 'uploading' | 'analyzing' | 'generating' | 'done' | 'error'
   message: string
   percent: number
 }
@@ -47,7 +50,16 @@ export default function CreatePage() {
     language: 'en',
     videoLength: 30,
     model: 'standard',
+    highlightStyle: 'tiktok',
+    voiceId: '',
+    useReferenceAnalysis: false,
+    referenceAnalysisId: undefined,
+    comfyuiModel: 'sdxl',
   })
+  const [referenceVideo, setReferenceVideo] = useState<File | null>(null)
+  const [referenceVideoUrl, setReferenceVideoUrl] = useState<string | null>(null)
+  const [analysisResult, setAnalysisResult] = useState<AnalysisResponse | null>(null)
+  const [analyzing, setAnalyzing] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [progress, setProgress] = useState<ProgressState>({
     show: false,
@@ -64,7 +76,8 @@ export default function CreatePage() {
 
   const canProceedStep1 = imageUrls.length > 0
   const canProceedStep2 = description.trim().length >= 10
-  const canProceedStep3 = true
+  // Step 3 is optional
+  // Step 4 is always valid
 
   const handleNext = () => {
     if (currentStep < totalSteps) {
@@ -78,6 +91,33 @@ export default function CreatePage() {
     }
   }
 
+  const handleReferenceVideoChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    setReferenceVideo(file)
+    setReferenceVideoUrl(URL.createObjectURL(file))
+    setAnalysisResult(null)
+
+    // Auto-analyze
+    setAnalyzing(true)
+    try {
+      const result = await analyzeVideo(file)
+      setAnalysisResult(result)
+      setConfig((prev) => ({
+        ...prev,
+        useReferenceAnalysis: true,
+        referenceAnalysisId: result.task_id,
+      }))
+      toast.success('Reference video analyzed!')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : 'Analysis failed'
+      toast.error(message)
+    } finally {
+      setAnalyzing(false)
+    }
+  }
+
   const handleSubmit = async () => {
     setSubmitting(true)
     setProgress({
@@ -88,11 +128,11 @@ export default function CreatePage() {
     })
 
     try {
-      // Upload any remaining pending images
       setProgress((p) => ({ ...p, status: 'uploading', message: 'Uploading images...', percent: 20 }))
 
-      // Create the task
-      setProgress((p) => ({ ...p, status: 'generating', message: 'Creating video generation task...', percent: 50 }))
+      setProgress((p) => ({ ...p, status: 'analyzing', message: 'Processing configuration...', percent: 40 }))
+
+      setProgress((p) => ({ ...p, status: 'generating', message: 'Creating video generation task...', percent: 60 }))
 
       const payload: CreateTaskPayload = {
         title: description.slice(0, 80),
@@ -103,6 +143,13 @@ export default function CreatePage() {
         video_length: config.videoLength,
         model: config.model,
         image_urls: imageUrls,
+        voice_id: config.voiceId || undefined,
+        highlight_style: config.highlightStyle,
+        reference_analysis_id: config.useReferenceAnalysis ? config.referenceAnalysisId : undefined,
+        settings: {
+          comfyuiModel: config.comfyuiModel,
+          useReferenceAnalysis: config.useReferenceAnalysis,
+        },
       }
 
       const task = await createTask(payload)
@@ -208,6 +255,127 @@ export default function CreatePage() {
         return (
           <div className="space-y-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-2">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-500/10">
+                <Video className="h-5 w-5 text-purple-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-white">Reference Video (Optional)</h2>
+                <p className="text-sm text-slate-400">
+                  Upload a reference video for style, pacing, and scene analysis. The AI will extract the visual style and apply it to your generated video.
+                </p>
+              </div>
+            </div>
+
+            {/* Upload */}
+            <div className="glass-card p-6 border-dashed border-2 border-slate-700 hover:border-purple-500/50 transition-colors">
+              <input
+                type="file"
+                accept="video/mp4,video/quicktime,video/webm,video/x-matroska"
+                onChange={handleReferenceVideoChange}
+                className="hidden"
+                id="reference-video-upload"
+              />
+              <label
+                htmlFor="reference-video-upload"
+                className="flex flex-col items-center justify-center gap-3 cursor-pointer"
+              >
+                <div className="flex h-16 w-16 items-center justify-center rounded-full bg-purple-500/10">
+                  <Video className="h-8 w-8 text-purple-400" />
+                </div>
+                <div className="text-center">
+                  <p className="text-sm font-medium text-slate-200">
+                    {referenceVideo ? 'Click to change video' : 'Upload reference video'}
+                  </p>
+                  <p className="text-xs text-slate-500 mt-1">MP4, MOV, WebM — up to 100MB</p>
+                </div>
+              </label>
+            </div>
+
+            {/* Preview */}
+            {referenceVideoUrl && (
+              <div className="glass-card overflow-hidden">
+                <video
+                  src={referenceVideoUrl}
+                  controls
+                  className="w-full max-h-64 bg-black"
+                />
+                <div className="p-3 flex items-center justify-between">
+                  <p className="text-sm text-slate-300">{referenceVideo?.name}</p>
+                  <button
+                    onClick={() => {
+                      setReferenceVideo(null)
+                      setReferenceVideoUrl(null)
+                      setAnalysisResult(null)
+                    }}
+                    className="text-xs text-red-400 hover:text-red-300"
+                  >
+                    Remove
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {analyzing && (
+              <div className="glass-card p-4 border-purple-500/30">
+                <div className="flex items-center gap-3">
+                  <Loader2 className="h-5 w-5 text-purple-400 animate-spin" />
+                  <div>
+                    <p className="text-sm font-medium text-slate-200">Analyzing reference video...</p>
+                    <p className="text-xs text-slate-500">Extracting style, pacing, scenes, and colors</p>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Analysis results */}
+            {analysisResult && !analyzing && (
+              <div className="glass-card p-4 border-green-500/30">
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle2 className="h-5 w-5 text-green-400" />
+                  <p className="text-sm font-medium text-green-400">Analysis Complete</p>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Style analysis will be applied in the next steps. You can review details in the Analysis page.
+                </p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {analysisResult.result?.style && (
+                    <span className="text-xs bg-purple-500/10 text-purple-300 px-2 py-1 rounded-full">
+                      Style: {Object.keys(analysisResult.result.style as object).join(', ')}
+                    </span>
+                  )}
+                  {analysisResult.result?.pacing && (
+                    <span className="text-xs bg-blue-500/10 text-blue-300 px-2 py-1 rounded-full">
+                      Pacing analyzed
+                    </span>
+                  )}
+                  {analysisResult.result?.scenes && Array.isArray(analysisResult.result.scenes) && (
+                    <span className="text-xs bg-green-500/10 text-green-300 px-2 py-1 rounded-full">
+                      {analysisResult.result.scenes.length} scenes detected
+                    </span>
+                  )}
+                  {analysisResult.result?.colors && (
+                    <span className="text-xs bg-yellow-500/10 text-yellow-300 px-2 py-1 rounded-full">
+                      Color palette extracted
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Skip hint */}
+            {!referenceVideo && !analyzing && (
+              <p className="text-xs text-slate-500 text-center">
+                This step is optional. Skip to use manual configuration.
+              </p>
+            )}
+          </div>
+        )
+
+      case 4:
+        return (
+          <div className="space-y-6 animate-fade-in">
+            <div className="flex items-center gap-3 mb-2">
               <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-500/10">
                 <Settings2 className="h-5 w-5 text-indigo-400" />
               </div>
@@ -222,7 +390,7 @@ export default function CreatePage() {
           </div>
         )
 
-      case 4:
+      case 5:
         return (
           <div className="space-y-6 animate-fade-in">
             <div className="flex items-center gap-3 mb-2">
@@ -276,6 +444,10 @@ export default function CreatePage() {
                     <p className="text-slate-200 font-medium capitalize">{config.style}</p>
                   </div>
                   <div>
+                    <p className="text-slate-500">Highlight Style</p>
+                    <p className="text-slate-200 font-medium capitalize">{config.highlightStyle}</p>
+                  </div>
+                  <div>
                     <p className="text-slate-500">Language</p>
                     <p className="text-slate-200 font-medium uppercase">{config.language}</p>
                   </div>
@@ -287,42 +459,70 @@ export default function CreatePage() {
                     <p className="text-slate-500">Model</p>
                     <p className="text-slate-200 font-medium capitalize">{config.model}</p>
                   </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Progress overlay */}
-            {progress.show && (
-              <div className="glass-card p-6 border-indigo-500/30">
-                <div className="flex items-center gap-3 mb-4">
-                  {progress.status === 'done' ? (
-                    <CheckCircle2 className="h-6 w-6 text-green-400" />
-                  ) : progress.status === 'error' ? (
-                    <AlertCircle className="h-6 w-6 text-red-400" />
-                  ) : (
-                    <Loader2 className="h-6 w-6 text-indigo-400 animate-spin" />
-                  )}
                   <div>
-                    <p className="text-sm font-medium text-slate-200">{progress.message}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {progress.status === 'done'
-                        ? 'Task created successfully'
-                        : progress.status === 'error'
-                        ? 'Something went wrong'
-                        : 'Please wait...'}
+                    <p className="text-slate-500">Voice</p>
+                    <p className="text-slate-200 font-medium">{config.voiceId || 'Default (System)'}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">ComfyUI Model</p>
+                    <p className="text-slate-200 font-medium uppercase">{config.comfyuiModel}</p>
+                  </div>
+                  <div>
+                    <p className="text-slate-500">Reference Analysis</p>
+                    <p className="text-slate-200 font-medium">
+                      {config.useReferenceAnalysis ? '✓ Enabled' : '—'}
                     </p>
                   </div>
                 </div>
-                {progress.status !== 'done' && progress.status !== 'error' && (
-                  <div className="h-2 rounded-full bg-slate-700 overflow-hidden">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
-                      style={{ width: `${progress.percent}%` }}
-                    />
-                  </div>
-                )}
               </div>
-            )}
+
+              {/* Reference video */}
+              {referenceVideo && (
+                <div className="glass-card p-4">
+                  <p className="text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Reference Video</p>
+                  <p className="text-sm text-slate-300">{referenceVideo.name}</p>
+                  {analysisResult && (
+                    <p className="text-xs text-green-400 mt-1 flex items-center gap-1">
+                      <CheckCircle2 className="h-3 w-3" />
+                      Analysis: {analysisResult.task_id.slice(0, 8)}...
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {/* Progress overlay */}
+              {progress.show && (
+                <div className="glass-card p-6 border-indigo-500/30">
+                  <div className="flex items-center gap-3 mb-4">
+                    {progress.status === 'done' ? (
+                      <CheckCircle2 className="h-6 w-6 text-green-400" />
+                    ) : progress.status === 'error' ? (
+                      <AlertCircle className="h-6 w-6 text-red-400" />
+                    ) : (
+                      <Loader2 className="h-6 w-6 text-indigo-400 animate-spin" />
+                    )}
+                    <div>
+                      <p className="text-sm font-medium text-slate-200">{progress.message}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">
+                        {progress.status === 'done'
+                          ? 'Task created successfully'
+                          : progress.status === 'error'
+                          ? 'Something went wrong'
+                          : 'Please wait...'}
+                      </p>
+                    </div>
+                  </div>
+                  {progress.status !== 'done' && progress.status !== 'error' && (
+                    <div className="h-2 rounded-full bg-slate-700 overflow-hidden">
+                      <div
+                        className="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500 transition-all duration-500"
+                        style={{ width: `${progress.percent}%` }}
+                      />
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
           </div>
         )
 
@@ -422,7 +622,6 @@ export default function CreatePage() {
             disabled={
               (currentStep === 1 && !canProceedStep1) ||
               (currentStep === 2 && !canProceedStep2) ||
-              (currentStep === 3 && !canProceedStep3) ||
               submitting
             }
             className="btn-primary"
