@@ -11,6 +11,10 @@ import {
   TrendingUp,
   Clock,
   ArrowRight,
+  Coins,
+  Zap,
+  Shield,
+  Gift,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { getTasks, deleteTask, type Task } from '@/lib/api'
@@ -20,6 +24,10 @@ export default function DashboardPage() {
   const [tasks, setTasks] = useState<Task[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [creditsRemaining, setCreditsRemaining] = useState(150)
+  const [creditsUsed, setCreditsUsed] = useState(23)
+  const [currentPlan, setCurrentPlan] = useState('Free')
+  const [usageThisMonth, setUsageThisMonth] = useState(23)
 
   const fetchTasks = async () => {
     try {
@@ -116,6 +124,106 @@ export default function DashboardPage() {
           <Plus className="h-4 w-4" />
           Create Video
         </Link>
+      </div>
+
+      {/* SaaS Metrics */}
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {/* Credits Remaining */}
+        <div className="glass-card p-5 border border-indigo-500/20">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Credits</p>
+              <p className="text-2xl font-bold text-white mt-1">{creditsRemaining.toLocaleString()}</p>
+            </div>
+            <div className="rounded-xl p-3 bg-indigo-500/10">
+              <Coins className="h-5 w-5 text-indigo-400" />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <div className="h-1.5 bg-slate-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full"
+                style={{ width: `${Math.min((creditsRemaining / 500) * 100, 100)}%` }}
+              />
+            </div>
+            <p className="text-[10px] text-slate-500">
+              {creditsUsed} used this month
+            </p>
+          </div>
+        </div>
+
+        {/* Current Plan */}
+        <div className="glass-card p-5 border border-indigo-500/20">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Plan</p>
+              <p className="text-2xl font-bold text-white mt-1">{currentPlan}</p>
+            </div>
+            <div className={`rounded-xl p-3 ${
+              currentPlan === 'Enterprise' ? 'bg-amber-500/10' :
+              currentPlan === 'Pro' ? 'bg-indigo-500/10' :
+              'bg-slate-500/10'
+            }`}>
+              {currentPlan === 'Enterprise' ? (
+                <Shield className="h-5 w-5 text-amber-400" />
+              ) : currentPlan === 'Pro' ? (
+                <Zap className="h-5 w-5 text-indigo-400" />
+              ) : (
+                <Gift className="h-5 w-5 text-slate-400" />
+              )}
+            </div>
+          </div>
+          {currentPlan === 'Free' && (
+            <Link href="/plans" className="btn-primary w-full text-xs py-2">
+              <Zap className="h-3.5 w-3.5" />
+              Upgrade Plan
+            </Link>
+          )}
+          {currentPlan !== 'Free' && (
+            <div className="flex items-center gap-2 text-xs text-green-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-green-400" />
+              Active
+            </div>
+          )}
+        </div>
+
+        {/* Usage This Month */}
+        <div className="glass-card p-5 border border-indigo-500/20">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Usage</p>
+              <p className="text-2xl font-bold text-white mt-1">{usageThisMonth}</p>
+            </div>
+            <div className="rounded-xl p-3 bg-blue-500/10">
+              <TrendingUp className="h-5 w-5 text-blue-400" />
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500">
+            Tasks generated this month
+          </p>
+        </div>
+
+        {/* Stats (existing — keep as 4th card) */}
+        <div className="glass-card p-5 border border-green-500/20">
+          <div className="flex items-start justify-between mb-3">
+            <div>
+              <p className="text-xs font-medium text-slate-500 uppercase tracking-wider">Success Rate</p>
+              <p className="text-2xl font-bold text-white mt-1">
+                {loading ? (
+                  <span className="inline-block w-12 h-6 rounded bg-slate-700 animate-pulse" />
+                ) : (
+                  `${tasks.length > 0 ? Math.round((stats.completed / (stats.total || 1)) * 100) : 0}%`
+                )}
+              </p>
+            </div>
+            <div className="rounded-xl p-3 bg-green-500/10">
+              <CheckCircle2 className="h-5 w-5 text-green-400" />
+            </div>
+          </div>
+          <p className="text-[10px] text-slate-500">
+            {stats.completed} completed / {stats.total || 0} total
+          </p>
+        </div>
       </div>
 
       {/* Stats Cards */}

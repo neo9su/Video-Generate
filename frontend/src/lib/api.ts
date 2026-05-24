@@ -323,4 +323,93 @@ export async function createPrompt(data: { title: string; content: string; categ
   return response
 }
 
+// ─── API Keys ──────────────────────────────────────────────────────────
+export async function createApiKey(name: string) {
+  const { data } = await api.post('/api-keys', { name })
+  return data
+}
+
+export async function listApiKeys() {
+  const { data } = await api.get('/api-keys')
+  return data
+}
+
+export async function deleteApiKey(id: number) {
+  const { data } = await api.delete(`/api-keys/${id}`)
+  return data
+}
+
+// ─── Webhooks ──────────────────────────────────────────────────────────
+export async function registerWebhook(data: { url: string; events: string[] }) {
+  const { data: response } = await api.post('/webhooks', data)
+  return response
+}
+
+export async function listWebhooks() {
+  const { data } = await api.get('/webhooks')
+  return data
+}
+
+export async function updateWebhook(id: number, data: any) {
+  const { data: response } = await api.put(`/webhooks/${id}`, data)
+  return response
+}
+
+export async function deleteWebhook(id: number) {
+  const { data } = await api.delete(`/webhooks/${id}`)
+  return data
+}
+
+export async function testWebhook(id: number) {
+  const { data } = await api.post(`/webhooks/${id}/test`)
+  return data
+}
+
+// ─── Billing ──────────────────────────────────────────────────────────
+export async function getPlans() {
+  const { data } = await api.get('/billing/plans')
+  return data
+}
+
+export async function subscribe(plan: string) {
+  const { data } = await api.post('/billing/subscribe', { plan })
+  return data
+}
+
+export async function purchaseCredits(amount: number) {
+  const { data } = await api.post('/billing/credits', { amount })
+  return data
+}
+
+export async function getTransactions() {
+  const { data } = await api.get('/billing/transactions')
+  return data
+}
+
+// ─── Admin ─────────────────────────────────────────────────────────────
+export async function getAdminStats() {
+  const { data } = await api.get('/admin/stats')
+  return data
+}
+
+export async function getAdminUsers() {
+  const { data } = await api.get('/admin/users')
+  return data
+}
+
+export async function adjustUserCredits(userId: number, amount: number) {
+  const { data } = await api.post(`/admin/users/${userId}/credits`, { amount })
+  return data
+}
+
+export async function getGPUStatus() {
+  const { data } = await api.get('/admin/gpu')
+  return data
+}
+
+export async function getQueueStatus() {
+  const { data } = await api.get('/admin/queue')
+  return data
+}
+
 export default api
