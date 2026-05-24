@@ -1,9 +1,11 @@
 import type { Metadata } from 'next'
 import './globals.css'
+import ClientLayout from './ClientLayout'
 
 export const metadata: Metadata = {
   title: 'Video-Generate',
-  description: 'AI-powered video generation platform',
+  description: 'AI-powered video generation platform for e-commerce product videos',
+  keywords: ['video generation', 'AI video', 'e-commerce', 'product video'],
 }
 
 export default function RootLayout({
@@ -12,8 +14,10 @@ export default function RootLayout({
   children: React.ReactNode
 }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-gray-50">{children}</body>
+    <html lang="en" className="dark">
+      <body className="min-h-screen bg-slate-900 text-slate-100 antialiased">
+        <ClientLayout>{children}</ClientLayout>
+      </body>
     </html>
   )
 }
