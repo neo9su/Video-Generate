@@ -56,14 +56,18 @@ class CompositionService:
         scenes_dir = os.path.join(self.output_dir, "scenes")
         os.makedirs(scenes_dir, exist_ok=True)
 
-        # If scenes have image paths, create video segments
+        # If scenes have video/image paths, create video segments
         scene_files = []
         for i, scene in enumerate(scenes):
+            video_clip_path = scene.get("video_path", "")
             image_path = scene.get("image_path", "")
             duration = float(scene.get("duration_seconds", 5.0))
             scene_output = os.path.join(scenes_dir, f"scene_{i:04d}.mp4")
 
-            if image_path and os.path.exists(image_path):
+            if video_clip_path and os.path.exists(video_clip_path):
+                # Use AI-generated video clip, scale to target resolution
+                self._scale_video_clip(video_clip_path, scene_output, width, height)
+            elif image_path and os.path.exists(image_path):
                 # Create a video segment from image with duration
                 self._image_to_video(image_path, scene_output, duration, width, height)
             else:
@@ -143,6 +147,23 @@ class CompositionService:
             ),
             "-c:v", "libx264",
             "-pix_fmt", "yuv420p",
+            output_path,
+        ]
+        subprocess.run(cmd, capture_output=True, check=True)
+
+    def _scale_video_clip(self, input_path: str, output_path: str, width: int, height: int):
+        """Scale an AI-generated video clip to the target resolution and normalize FPS to 30."""
+        cmd = [
+            "ffmpeg", "-y",
+            "-i", input_path,
+            "-vf", (
+                f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
+                f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
+                f"fps=30"
+            ),
+            "-c:v", "libx264",
+            "-pix_fmt", "yuv420p",
+            "-an",  # Strip original audio (we'll add TTS audio later)
             output_path,
         ]
         subprocess.run(cmd, capture_output=True, check=True)

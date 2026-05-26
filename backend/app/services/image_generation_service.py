@@ -1,22 +1,97 @@
-"""Image generation service using the SD API server (http://10.190.0.222:7860)."""
+"""Image generation service using ComfyUI API (http://10.190.0.222:8188).
+
+Uses ComfyUI's prompt queue API to generate product photography images.
+Replaces the old SD WebUI API approach.
+"""
 import asyncio
 import base64
+import io
 import json
 import os
+import uuid
 from typing import Optional
 import httpx
 from ..config import settings
 
 
-class ImageGenerationService:
-    """Generates images from storyboard descriptions using SD API at port 7860.
+# ComfyUI txt2img workflow template
+def _build_workflow(prompt: str, negative_prompt: str, width: int, height: int,
+                   steps: int, cfg_scale: float, seed: int = -1,
+                   checkpoint: str = "dreamshaper_8.safetensors") -> dict:
+    """Build a ComfyUI workflow JSON for txt2img."""
+    if seed < 0:
+        import random
+        seed = random.randint(0, 2**32 - 1)
 
-    The SD server runs realisticVisionV51 model for photorealistic product images.
+    return {
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": checkpoint}
+        },
+        "2": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": prompt,
+                "clip": ["1", 1]
+            }
+        },
+        "3": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": negative_prompt,
+                "clip": ["1", 1]
+            }
+        },
+        "4": {
+            "class_type": "EmptyLatentImage",
+            "inputs": {
+                "width": width,
+                "height": height,
+                "batch_size": 1
+            }
+        },
+        "5": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "positive": ["2", 0],
+                "negative": ["3", 0],
+                "latent_image": ["4", 0],
+                "seed": seed,
+                "steps": steps,
+                "cfg": cfg_scale,
+                "sampler_name": "euler_ancestral",
+                "scheduler": "normal",
+                "denoise": 1.0
+            }
+        },
+        "6": {
+            "class_type": "VAEDecode",
+            "inputs": {
+                "samples": ["5", 0],
+                "vae": ["1", 2]
+            }
+        },
+        "7": {
+            "class_type": "SaveImage",
+            "inputs": {
+                "images": ["6", 0],
+                "filename_prefix": "api_gen"
+            }
+        }
+    }
+
+
+class ImageGenerationService:
+    """Generates images from storyboard descriptions using ComfyUI API at port 8188.
+
+    Uses dreamshaper_8 model for product photography style images.
     """
 
     def __init__(self):
-        self.base_url = settings.sd_api_url.rstrip("/")
+        self.base_url = settings.comfyui_url.rstrip("/")
         self.api_timeout = 120.0  # 2 min per image
+        self.checkpoint = "dreamshaper_8.safetensors"
 
     async def generate_scene_image(
         self,
@@ -29,10 +104,7 @@ class ImageGenerationService:
         cfg_scale: float = 7.0,
         product_image_path: str = "",
     ) -> str:
-        """Generate a single product photography image from text prompt.
-
-        Uses professional product photography-style prompting.
-        Supports img2img from a product reference image if provided.
+        """Generate a single product photography image via ComfyUI.
 
         Args:
             prompt: SD product photography prompt (from storyboard visual_prompt).
@@ -41,7 +113,7 @@ class ImageGenerationService:
             width, height: Image dimensions.
             steps: Sampling steps (25=balanced product quality).
             cfg_scale: Classifier-free guidance scale.
-            product_image_path: Optional path to product reference image for img2img.
+            product_image_path: Currently unused (ComfyUI img2img needs different workflow).
 
         Returns:
             Path to saved image file, or empty string on failure.
@@ -51,61 +123,68 @@ class ImageGenerationService:
                 "nsfw, ugly, deformed, text, watermark, signature, logo, "
                 "low quality, blurry, distorted, bad anatomy, extra limbs, "
                 "poorly drawn, mutation, mutated, bad proportions, "
-                "disfigured, gross, photography, amateur photo"
+                "disfigured, gross, amateur photo"
             )
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        # SD API payload: txt2img (or img2img if product image provided)
-        if product_image_path and os.path.exists(product_image_path):
-            with open(product_image_path, "rb") as f:
-                img_b64 = base64.b64encode(f.read()).decode("utf-8")
-            payload = {
-                "init_images": [img_b64],
-                "prompt": prompt,
-                "negative_prompt": negative_prompt,
-                "denoising_strength": 0.75,
-                "steps": steps,
-                "width": width,
-                "height": height,
-                "cfg_scale": cfg_scale,
-                "batch_size": 1,
-                "sampler_name": "Euler a",
-            }
-        else:
-            payload = {
-                "prompt": prompt,
-                "negative_prompt": negative_prompt,
-                "steps": steps,
-                "width": width,
-                "height": height,
-                "cfg_scale": cfg_scale,
-                "batch_size": 1,
-                "sampler_name": "Euler a",
-            }
+        workflow = _build_workflow(
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            width=width,
+            height=height,
+            steps=steps,
+            cfg_scale=cfg_scale,
+            checkpoint=self.checkpoint,
+        )
+
+        # Queue the prompt
+        client_id = str(uuid.uuid4())
+        payload = {"prompt": workflow, "client_id": client_id}
 
         async with httpx.AsyncClient(timeout=self.api_timeout) as client:
-            try:
-                endpoint = f"{self.base_url}/sdapi/v1/img2img" if product_image_path else f"{self.base_url}/sdapi/v1/txt2img"
-                resp = await client.post(endpoint, json=payload)
-                resp.raise_for_status()
-                data = resp.json()
-            except httpx.TimeoutException:
-                raise TimeoutError(f"SD API timed out after {self.api_timeout}s")
-            except httpx.HTTPStatusError as e:
-                raise RuntimeError(f"SD API returned {e.response.status_code}: {e.response.text[:200]}")
-            except Exception as e:
-                raise RuntimeError(f"SD API error: {e}")
+            # Submit workflow
+            resp = await client.post(f"{self.base_url}/prompt", json=payload)
+            if resp.status_code != 200:
+                raise RuntimeError(f"ComfyUI queue failed: {resp.status_code} {resp.text[:200]}")
+            queue_data = resp.json()
+            prompt_id = queue_data.get("prompt_id")
+            if not prompt_id:
+                raise RuntimeError(f"ComfyUI: no prompt_id: {queue_data}")
 
-        images = data.get("images", [])
-        if not images:
-            raise RuntimeError("SD API returned no images")
+            # Poll for completion
+            for _ in range(120):  # max 120 seconds
+                await asyncio.sleep(1)
+                hist_resp = await client.get(f"{self.base_url}/history/{prompt_id}")
+                if hist_resp.status_code != 200:
+                    continue
+                history = hist_resp.json()
+                if prompt_id not in history:
+                    continue
+                entry = history[prompt_id]
+                if entry.get("status", {}).get("status_str") == "error":
+                    raise RuntimeError(f"ComfyUI generation error: {entry}")
+                outputs = entry.get("outputs", {})
+                # Find SaveImage node output
+                for node_id, node_output in outputs.items():
+                    images = node_output.get("images", [])
+                    if images:
+                        img_info = images[0]
+                        filename = img_info["filename"]
+                        subfolder = img_info.get("subfolder", "")
+                        img_type = img_info.get("type", "output")
+                        # Download image
+                        params = {"filename": filename, "subfolder": subfolder, "type": img_type}
+                        img_resp = await client.get(f"{self.base_url}/view", params=params)
+                        if img_resp.status_code == 200:
+                            with open(output_path, "wb") as f:
+                                f.write(img_resp.content)
+                            return output_path
+                        raise RuntimeError(f"ComfyUI: failed to download image: {img_resp.status_code}")
+                # If outputs is non-empty but no images found, something is wrong
+                if outputs:
+                    raise RuntimeError(f"ComfyUI: no images in output: {outputs}")
 
-        # Decode and save the first image
-        img_bytes = base64.b64decode(images[0])
-        with open(output_path, "wb") as f:
-            f.write(img_bytes)
-
-        return output_path
+            raise TimeoutError(f"ComfyUI: generation timed out after 120s for prompt_id {prompt_id}")
 
     async def generate_scenes_batch(
         self,
@@ -123,7 +202,7 @@ class ImageGenerationService:
             scenes: List of scene dicts, each with 'visual_prompt', 'scene_type', 'scene_number'.
             output_dir: Directory to save generated images.
             task_id: Optional task ID for organizing output.
-            product_images: Optional list of product reference image paths (for img2img).
+            product_images: Optional list of product reference image paths (for future img2img).
 
         Returns:
             List of paths to generated images.
@@ -146,18 +225,12 @@ class ImageGenerationService:
 
             try:
                 enhanced_prompt = self._enhance_product_prompt(raw_prompt, scene_type)
-                # Use product image for product_hero and cta scenes (img2img)
-                ref_image = ""
-                if product_images and scene_type in ("product_hero", "cta"):
-                    ref_image = product_images[0]
-
                 await self.generate_scene_image(
                     prompt=enhanced_prompt,
                     output_path=output_path,
                     width=768,
                     height=768,
                     steps=25,
-                    product_image_path=ref_image,
                 )
                 image_paths.append(output_path)
             except Exception as e:
@@ -207,10 +280,10 @@ class ImageGenerationService:
         return f"{prompt}, {style}"
 
     async def check_connectivity(self) -> bool:
-        """Check if SD API is reachable."""
+        """Check if ComfyUI API is reachable."""
         try:
             async with httpx.AsyncClient(timeout=5.0) as client:
-                resp = await client.get(f"{self.base_url}/")
+                resp = await client.get(f"{self.base_url}/system_stats")
                 return resp.status_code == 200
         except Exception:
             return False

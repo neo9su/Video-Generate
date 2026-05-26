@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     cosyvoice_url: str = "http://10.190.0.222:8000"
     sd_api_url: str = "http://10.190.0.222:7860"
 
+    # SiliconFlow Video Generation API
+    siliconflow_api_key: str = "sk-ekwmjirtfcyrhsppkdxglzeoqqrqrkejdzdaoejqiqvqlukp"
+
     # Paths
     upload_dir: str = "/data/uploads"
     output_dir: str = "/data/output"

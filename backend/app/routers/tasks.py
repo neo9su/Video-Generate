@@ -14,6 +14,7 @@ from ..services.tts_service import tts_service
 from ..services.composition_service import composition_service
 from ..services.highlight_service import highlight_service
 from ..services.image_generation_service import image_gen_service
+from ..services.video_generation_service import video_gen_service
 
 router = APIRouter()
 
@@ -241,6 +242,29 @@ async def start_task(
         except Exception as e:
             _set_od(task, "image_gen_error", str(e))
 
+        await db.flush()
+
+        # --- Step 2d: Generate AI video clips via SiliconFlow ---
+        video_clips = []
+        try:
+            video_paths = await video_gen_service.generate_scenes_video(
+                scenes=storyboard,
+                output_dir=f"{settings.output_dir}/tasks/{task_id}",
+                task_id=str(task_id),
+                image_paths=generated_images if generated_images else None,
+            )
+            for i, vid_path in enumerate(video_paths):
+                if i < len(storyboard) and vid_path:
+                    storyboard[i]["video_path"] = vid_path
+                    video_clips.append(vid_path)
+            if video_clips:
+                _set_od(task, "video_clips", video_clips)
+                _set_od(task, "storyboard", storyboard)
+        except Exception as e:
+            _set_od(task, "video_gen_error", str(e))
+            # Fallback: continue with images only (Ken Burns effect)
+
+        task.progress = 65
         await db.flush()
 
         # --- Step 3: Generate narration audio via TTS ---
