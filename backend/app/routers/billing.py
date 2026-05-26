@@ -2,6 +2,7 @@
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -51,30 +52,38 @@ CREDIT_PACKS = {
 }
 
 
+class PurchaseCreditsRequest(BaseModel):
+    amount: int
+
+
+class SubscribeRequest(BaseModel):
+    plan: str
+
+
 @router.post("/credits")
 async def purchase_credits(
-    amount: int = Query(..., description="Number of credits to purchase"),
+    req: PurchaseCreditsRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Purchase additional credits."""
-    if amount not in CREDIT_PACKS:
+    if req.amount not in CREDIT_PACKS:
         valid_options = ", ".join(str(k) for k in CREDIT_PACKS)
         raise HTTPException(
             status_code=400,
             detail=f"Invalid credit amount. Available packs: {valid_options}",
         )
 
-    pack = CREDIT_PACKS[amount]
+    pack = CREDIT_PACKS[req.amount]
 
     # TODO: Integrate with real payment processor (Stripe, etc.)
     # For now, we just add the credits directly
 
-    current_user.credits += amount
+    current_user.credits += req.amount
 
     transaction = CreditTransaction(
         user_id=current_user.id,
-        amount=amount,
+        amount=req.amount,
         balance_after=current_user.credits,
         description=f"Purchased {pack['label']} (${pack['price']})",
         reference_type="purchase",
@@ -82,7 +91,7 @@ async def purchase_credits(
     db.add(transaction)
 
     return {
-        "credits_purchased": amount,
+        "credits_purchased": req.amount,
         "price_usd": pack["price"],
         "credits_remaining": current_user.credits,
         "transaction_id": transaction.id,
@@ -124,33 +133,33 @@ async def get_transactions(
 
 @router.post("/subscribe")
 async def subscribe_to_plan(
-    plan: str = Query(..., description="Plan name: free, pro, or enterprise"),
+    req: SubscribeRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Subscribe to a plan."""
-    plan = plan.lower()
-    if plan not in AVAILABLE_PLANS:
+    plan_name = req.plan.lower()
+    if plan_name not in AVAILABLE_PLANS:
         valid = ", ".join(AVAILABLE_PLANS)
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid plan '{plan}'. Available: {valid}",
+            detail=f"Invalid plan '{plan_name}'. Available: {valid}",
         )
 
-    plan_info = AVAILABLE_PLANS[plan]
+    plan_info = AVAILABLE_PLANS[plan_name]
 
     # TODO: Integrate with real payment processor for paid plans
-    if plan != "free" and plan_info["price"] > 0:
+    if plan_name != "free" and plan_info["price"] > 0:
         # For now, just set the plan directly
         pass
 
-    current_user.plan = plan
+    current_user.plan = plan_name
     current_user.credits = plan_info["credits"]
     current_user.api_rate_limit = plan_info["api_rate_limit"]
     current_user.subscription_end = datetime.utcnow() + timedelta(days=30)
 
     return {
-        "plan": plan,
+        "plan": plan_name,
         "credits": plan_info["credits"],
         "api_rate_limit": plan_info["api_rate_limit"],
         "features": plan_info["features"],

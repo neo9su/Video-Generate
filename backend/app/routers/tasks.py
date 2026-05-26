@@ -13,8 +13,26 @@ from ..services.llm_service import llm_service
 from ..services.tts_service import tts_service
 from ..services.composition_service import composition_service
 from ..services.highlight_service import highlight_service
+from ..services.image_generation_service import image_gen_service
 
 router = APIRouter()
+
+
+def _set_od(task, key, value):
+    """Set a key on task.output_data with SQLAlchemy change detection."""
+    od = task.output_data
+    if od is None:
+        od = {}
+    od = dict(od)  # Create fresh dict to force SQLAlchemy change tracking
+    od[key] = value
+    task.output_data = od
+
+
+def _get_od(task):
+    """Get output_data dict, ensuring it's not None."""
+    if task.output_data is None:
+        task.output_data = {}
+    return task.output_data
 
 
 @router.post("/", response_model=TaskResponse, status_code=201)
@@ -55,12 +73,10 @@ async def list_tasks(
         except ValueError:
             raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
 
-    # Count total
     count_q = select(func.count(Task.id)).where(*conditions)
     total_result = await db.execute(count_q)
     total = total_result.scalar_one()
 
-    # Fetch tasks
     q = select(Task).where(*conditions).order_by(Task.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(q)
     tasks = list(result.scalars().all())
@@ -108,8 +124,13 @@ async def start_task(
 ):
     """Start processing a video generation task.
 
-    This transitions the task from 'pending' to 'processing' and kicks off
-    the LLM workflow (marketing copy → storyboard → TTS → composition).
+    Pipeline:
+    1. Generate marketing copy (LLM)
+    2. Generate storyboard (LLM)
+    2b. Generate highlight subtitles
+    2c. Generate scene images (SD API)
+    3. Generate narration audio (TTS)
+    4. Compose final video (FFmpeg)
     """
     q = select(Task).where(Task.id == task_id, Task.user_id == user_id)
     result = await db.execute(q)
@@ -123,13 +144,13 @@ async def start_task(
             detail=f"Cannot start task with status '{task.status.value}'. Only 'pending' tasks can be started.",
         )
 
-    # Transition to processing
     task.status = TaskStatus.PROCESSING
     task.progress = 5
     await db.flush()
 
     try:
         input_data = task.input_data or {}
+        product_name = input_data.get("product_name", task.title)
         product_description = input_data.get("product_description", "")
         product_images = input_data.get("product_images", [])
         task_config = task.config or {}
@@ -147,17 +168,19 @@ async def start_task(
             platform=platform,
         )
         task.progress = 30
-        if task.input_data is None:
-            task.input_data = {}
-        task.input_data["marketing_copy"] = marketing_copy
+        inp = task.input_data or {}
+        inp["marketing_copy"] = marketing_copy
+        task.input_data = inp
         await db.flush()
 
         # --- Step 2: Generate storyboard ---
-        storyboard = await llm_service.generate_storyboard(marketing_copy)
+        storyboard = await llm_service.generate_storyboard(
+            marketing_copy,
+            product_name=product_name,
+            product_images=product_images,
+        )
         task.progress = 50
-        if task.output_data is None:
-            task.output_data = {}
-        task.output_data["storyboard"] = storyboard
+        _set_od(task, "storyboard", storyboard)
         await db.flush()
 
         # --- Step 2b: Generate highlight subtitles ---
@@ -165,18 +188,14 @@ async def start_task(
             language = "zh" if any('\u4e00' <= c <= '\u9fff' for c in marketing_copy) else "en"
             highlight_words = highlight_service.detect_highlight_words(marketing_copy, language=language)
 
-            # Generate SRT subtitles
             srt_content = highlight_service.generate_srt(storyboard, language=language)
             srt_path = f"{settings.output_dir}/tasks/{task_id}/subtitles.srt"
             if srt_content:
                 os.makedirs(os.path.dirname(srt_path), exist_ok=True)
                 with open(srt_path, "w", encoding="utf-8") as f:
                     f.write(srt_content)
-                if task.output_data is None:
-                    task.output_data = {}
-                task.output_data["subtitle_srt"] = srt_path
+                _set_od(task, "subtitle_srt", srt_path)
 
-            # Generate ASS subtitles with highlight animations
             ass_content = highlight_service.generate_ass_with_highlights(
                 storyboard, highlights=highlight_words, language=language,
             )
@@ -185,13 +204,9 @@ async def start_task(
                 os.makedirs(os.path.dirname(ass_path), exist_ok=True)
                 with open(ass_path, "w", encoding="utf-8") as f:
                     f.write(ass_content)
-                if task.output_data is None:
-                    task.output_data = {}
-                task.output_data["subtitle_ass"] = ass_path
-                task.output_data["subtitle_highlights"] = highlight_words
+                _set_od(task, "subtitle_ass", ass_path)
+                _set_od(task, "subtitle_highlights", highlight_words)
 
-            # TikTok-style subtitles for short-form platforms
-            platform = (task.config or {}).get("platform", "tiktok")
             if platform in ("tiktok", "shorts", "reels"):
                 tiktok_ass = highlight_service.create_tiktok_style_subtitles(storyboard)
                 tiktok_path = f"{settings.output_dir}/tasks/{task_id}/subtitles_tiktok.ass"
@@ -199,16 +214,33 @@ async def start_task(
                     os.makedirs(os.path.dirname(tiktok_path), exist_ok=True)
                     with open(tiktok_path, "w", encoding="utf-8") as f:
                         f.write(tiktok_ass)
-                    if task.output_data is None:
-                        task.output_data = {}
-                    task.output_data["subtitle_tiktok"] = tiktok_path
+                    _set_od(task, "subtitle_tiktok", tiktok_path)
         except Exception as e:
-            # Don't fail the whole task if subtitle generation fails
-            if task.output_data is None:
-                task.output_data = {}
-            task.output_data["subtitle_error"] = str(e)
+            _set_od(task, "subtitle_error", str(e))
 
         task.progress = 60
+        await db.flush()
+
+        # --- Step 2c: Generate scene images via SD API ---
+        generated_images = []
+        try:
+            image_paths = await image_gen_service.generate_scenes_batch(
+                scenes=storyboard,
+                output_dir=f"{settings.output_dir}/tasks/{task_id}",
+                task_id=str(task_id),
+                product_images=product_images,
+            )
+            for i, img_path in enumerate(image_paths):
+                if i < len(storyboard) and img_path:
+                    storyboard[i]["image_path"] = img_path
+                    generated_images.append(img_path)
+            if generated_images:
+                _set_od(task, "generated_images", generated_images)
+                # Update storyboard with image paths
+                _set_od(task, "storyboard", storyboard)
+        except Exception as e:
+            _set_od(task, "image_gen_error", str(e))
+
         await db.flush()
 
         # --- Step 3: Generate narration audio via TTS ---
@@ -222,9 +254,7 @@ async def start_task(
             os.makedirs(os.path.dirname(audio_path), exist_ok=True)
             with open(audio_path, "wb") as f:
                 f.write(audio_bytes)
-            if task.output_data is None:
-                task.output_data = {}
-            task.output_data["audio_path"] = audio_path
+            _set_od(task, "audio_path", audio_path)
 
         task.progress = 70
         await db.flush()
@@ -240,9 +270,9 @@ async def start_task(
         )
 
         task.progress = 90
-        if task.output_data is None:
-            task.output_data = {}
-        task.output_data["video_path"] = composed_path
+        _set_od(task, "video_path", composed_path)
+        if generated_images:
+            _set_od(task, "generated_images", generated_images)
         await db.flush()
 
         # --- Step 5: Mark completed ---

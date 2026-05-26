@@ -108,7 +108,7 @@ class CompositionService:
             video_with_audio = concatenated_video
 
         # Add subtitles if provided
-        final_output = output_path
+        result_file = video_with_audio
         if subtitles and os.path.exists(subtitles):
             subtitled_output = os.path.join(self.output_dir, "with_subtitles.mp4")
             cmd = [
@@ -119,11 +119,11 @@ class CompositionService:
                 subtitled_output,
             ]
             subprocess.run(cmd, capture_output=True, check=True)
-            final_output = subtitled_output
+            result_file = subtitled_output
 
         # Copy to final output path if different
-        if final_output != output_path:
-            cmd = ["cp", final_output, output_path]
+        if result_file != output_path:
+            cmd = ["cp", result_file, output_path]
             subprocess.run(cmd, check=True)
 
         # Cleanup intermediate files
@@ -132,16 +132,17 @@ class CompositionService:
         return output_path
 
     def _image_to_video(self, image_path: str, output_path: str, duration: float, width: int, height: int):
-        """Create a video segment from a single image."""
+        """Create a video segment from a single image with Ken Burns slow zoom effect."""
+        total_frames = int(duration * 30)
         cmd = [
             "ffmpeg", "-y",
-            "-loop", "1",
             "-i", image_path,
+            "-vf", (
+                f"zoompan=z='if(lte(on,1),1,min(zoom+0.002,1.06))':"
+                f"d={total_frames}:s={width}x{height}:fps=30"
+            ),
             "-c:v", "libx264",
-            "-t", str(duration),
             "-pix_fmt", "yuv420p",
-            "-vf", f"scale={width}:{height}:force_original_aspect_ratio=decrease,pad={width}:{height}:(ow-iw)/2:(oh-ih)/2",
-            "-r", "30",
             output_path,
         ]
         subprocess.run(cmd, capture_output=True, check=True)

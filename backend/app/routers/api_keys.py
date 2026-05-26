@@ -2,6 +2,7 @@
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,21 +14,27 @@ from ..models.api_key import ApiKey
 router = APIRouter(tags=["api-keys"])
 
 
+class CreateApiKeyRequest(BaseModel):
+    name: str
+
+
 @router.post("")
 async def create_api_key(
-    name: str,
+    req: CreateApiKeyRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """Create a new API key."""
-    key_value = f"vg_{secrets.token_hex(32)}"
+    key_value = f"vg_{secrets.token_hex(24)}"
 
     api_key = ApiKey(
         user_id=current_user.id,
         key=key_value,
-        name=name,
+        name=req.name,
     )
     db.add(api_key)
+    await db.flush()
+    await db.refresh(api_key)
 
     return {
         "id": api_key.id,

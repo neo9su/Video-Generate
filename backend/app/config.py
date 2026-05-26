@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # External services
     comfyui_url: str = "http://10.190.0.222:8188"
     cosyvoice_url: str = "http://10.190.0.222:8000"
+    sd_api_url: str = "http://10.190.0.222:7860"
 
     # Paths
     upload_dir: str = "/data/uploads"

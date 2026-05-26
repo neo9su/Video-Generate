@@ -74,7 +74,7 @@ def create_access_token(user_id: int) -> str:
     """Create a JWT access token for the given user ID."""
     expire = datetime.now(timezone.utc) + timedelta(seconds=settings.jwt_expiration)
     to_encode = {
-        "sub": user_id,
+        "sub": str(user_id),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
     }
@@ -129,6 +129,7 @@ async def register(
     db.add(user)
     await db.flush()
     await db.refresh(user)
+    await db.commit()  # Commit immediately so subsequent requests can read
 
     token = create_access_token(user.id)
     return AuthResponse(

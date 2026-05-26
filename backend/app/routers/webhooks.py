@@ -2,7 +2,7 @@
 import secrets
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,8 +17,8 @@ router = APIRouter(tags=["webhooks"])
 
 @router.post("")
 async def register_webhook(
-    url: str,
-    events: list[str],
+    url: str = Body(..., description="Webhook callback URL"),
+    events: list[str] = Body(..., description="Event types to subscribe to"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
@@ -32,6 +32,8 @@ async def register_webhook(
         secret=secret,
     )
     db.add(webhook)
+    await db.flush()
+    await db.refresh(webhook)
 
     return {
         "id": webhook.id,
@@ -71,9 +73,9 @@ async def list_webhooks(
 @router.put("/{webhook_id}")
 async def update_webhook(
     webhook_id: int,
-    url: str = None,
-    events: list[str] = None,
-    is_active: bool = None,
+    url: str = Body(None, description="Webhook callback URL"),
+    events: list[str] = Body(None, description="Event types to subscribe to"),
+    is_active: bool = Body(None, description="Whether webhook is active"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):

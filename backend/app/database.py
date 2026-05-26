@@ -1,5 +1,5 @@
 """PostgreSQL (async) + Redis connection management."""
-from sqlalchemy import Text
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import declarative_base
 from redis.asyncio import Redis
@@ -35,9 +35,10 @@ async def check_db_connection() -> bool:
     """Check if the database is reachable."""
     try:
         async with AsyncSessionLocal() as session:
-            await session.execute(Text("SELECT 1"))
+            await session.execute(text("SELECT 1"))
         return True
-    except Exception:
+    except Exception as e:
+        print(f"[DB_CHECK] Connection failed: {type(e).__name__}: {e}")
         return False
 
 
