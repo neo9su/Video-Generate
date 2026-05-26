@@ -14,12 +14,14 @@ import {
   KeyIcon,
   GlobeAltIcon,
   ShieldCheckIcon,
+  ArrowPathIcon,
 } from '@heroicons/react/24/outline'
 import { useState, useEffect } from 'react'
 
 const mainNav = [
   { name: 'Dashboard', href: '/dashboard', icon: HomeIcon },
   { name: 'Create Video', href: '/create', icon: DocumentPlusIcon },
+  { name: 'Video Remake', href: '/remake', icon: ArrowPathIcon },
   { name: 'Tasks', href: '/tasks', icon: VideoCameraIcon },
 ]
 
