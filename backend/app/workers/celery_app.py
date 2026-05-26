@@ -12,5 +12,8 @@ celery_app = Celery(
         "app.workers.tasks.video_task",
         "app.workers.tasks.audio_task",
         "app.workers.tasks.compose_task",
+        "app.workers.tasks.pipeline_task",
+        "app.workers.tasks.video_gen_task",
+        "app.workers.tasks.remake_task",
     ],
 )
