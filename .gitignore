@@ -11,3 +11,4 @@ uploads/
 output/
 __pycache__/
 .DS_Store
+test_output/

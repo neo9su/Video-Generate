@@ -4,6 +4,7 @@ from .config import settings
 from .database import engine, Base
 from .routers import auth, tasks, videos, voices, prompts, health, analysis
 from .routers import admin, api_keys, webhooks, billing
+from .routers import remake
 from .middleware import RateLimitMiddleware
 
 app = FastAPI(
@@ -33,6 +34,9 @@ app.include_router(admin.router, prefix="/api/v1/admin", tags=["admin"])
 app.include_router(api_keys.router, prefix="/api/v1/api-keys", tags=["api-keys"])
 app.include_router(webhooks.router, prefix="/api/v1/webhooks", tags=["webhooks"])
 app.include_router(billing.router, prefix="/api/v1/billing", tags=["billing"])
+
+# Path B: Face swap + voice clone
+app.include_router(remake.router, prefix="/api/v1/remake", tags=["remake"])
 
 
 @app.on_event("startup")
