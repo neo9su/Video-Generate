@@ -26,7 +26,7 @@ async def _video_gen_async(self, task_id: int, user_id: int):
     from ...database import AsyncSessionLocal
     from ...models.task import Task, TaskStatus
     from ...config import settings
-    from ...services.comfyui_video_service import comfyui_video_service as video_gen_service
+    from ...services.video_generation_service import video_gen_service
     import os
 
     async with AsyncSessionLocal() as db:

@@ -41,7 +41,7 @@ async def _pipeline_async(task_id: int, user_id: int):
     from ...services.highlight_service import highlight_service
     from ...services.image_generation_service import image_gen_service
     from ...services.upscale_service import upscale_service
-    from ...services.comfyui_video_service import comfyui_video_service as video_gen_service
+    from ...services.video_generation_service import video_gen_service
 
     async with AsyncSessionLocal() as db:
         try:
@@ -179,9 +179,10 @@ async def _pipeline_async(task_id: int, user_id: int):
 
             await db.commit()
 
-            # --- Step 2e: Generate AI video clips (ComfyUI + Sulphur 2) ---
+            # --- Step 2e: Generate AI video clips (SiliconFlow Wan2.2) ---
             video_clips = []
-            use_video_gen = task_config.get("video_gen", True)
+            use_video_gen = (task_config.get("video_gen", True) and
+                             settings.siliconflow_api_key)
             if use_video_gen:
                 try:
                     # Use generated images as reference for I2V, or T2V if no images
