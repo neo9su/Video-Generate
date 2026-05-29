@@ -24,6 +24,7 @@ from typing import Optional
 import httpx
 
 from ..config import settings
+from .prompt_enhancer_service import prompt_enhancer_service
 
 
 class ComfyUIVideoService:
@@ -250,6 +251,7 @@ class ComfyUIVideoService:
         negative_prompt: str = "",
         seed: int = -1,
         frames: int = None,
+        enhance_prompt: bool = True,
     ) -> str:
         """Generate video from text prompt (T2V). Compatible with SiliconFlow interface."""
         if "x" in image_size:
@@ -258,9 +260,14 @@ class ComfyUIVideoService:
         else:
             width, height = self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT
 
+        # Enhance prompt for better video quality
+        final_prompt = prompt
+        if enhance_prompt:
+            final_prompt = await prompt_enhancer_service.enhance(prompt)
+
         num_frames = frames or self.DEFAULT_FRAMES
         workflow = self._build_t2v_workflow(
-            prompt=prompt, width=width, height=height,
+            prompt=final_prompt, width=width, height=height,
             frames=num_frames, seed=seed, negative_prompt=negative_prompt,
         )
 
@@ -282,6 +289,7 @@ class ComfyUIVideoService:
         seed: int = -1,
         frames: int = None,
         strength: float = None,
+        enhance_prompt: bool = True,
     ) -> str:
         """Generate video from image + text (I2V). Compatible with SiliconFlow interface."""
         if "x" in image_size:
@@ -290,13 +298,18 @@ class ComfyUIVideoService:
         else:
             width, height = self.DEFAULT_WIDTH, self.DEFAULT_HEIGHT
 
+        # Enhance prompt for I2V (focus on motion)
+        final_prompt = prompt
+        if enhance_prompt:
+            final_prompt = await prompt_enhancer_service.enhance_for_i2v(prompt)
+
         # Upload image to ComfyUI
         uploaded_name = await self._upload_image(image_path)
         num_frames = frames or self.DEFAULT_FRAMES
         i2v_strength = strength or self.DEFAULT_I2V_STRENGTH
 
         workflow = self._build_i2v_workflow(
-            prompt=prompt, image_name=uploaded_name,
+            prompt=final_prompt, image_name=uploaded_name,
             width=width, height=height, frames=num_frames,
             seed=seed, negative_prompt=negative_prompt, strength=i2v_strength,
         )
