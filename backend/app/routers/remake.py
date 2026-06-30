@@ -5,6 +5,8 @@ Returns immediately with task_id for polling.
 """
 import os
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi.responses import FileResponse
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from typing import Optional
@@ -24,6 +26,7 @@ async def start_remake(
     face_prompt: str = Form("", description="Prompt for face generation"),
     narration_text: str = Form("", description="Narration text (empty=Whisper extract)"),
     enhance_face: bool = Form(True, description="Apply face enhancement"),
+    watermark_data: str = Form("", description="Watermark annotation JSON"),
     user_id: int = Form(1, description="User ID"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -40,6 +43,13 @@ async def start_remake(
         input_data={"pipeline": "path_b", "original_filename": original_video.filename},
         config={"enhance_face": enhance_face, "face_prompt": face_prompt},
     )
+    if watermark_data:
+        try:
+            import json
+            parsed = json.loads(watermark_data)
+            task.config["watermark"] = parsed
+        except json.JSONDecodeError:
+            pass
     db.add(task)
     await db.flush()
     await db.refresh(task)
@@ -87,6 +97,7 @@ async def start_remake(
 
 @router.get("/remake/{task_id}")
 async def get_remake_status(
+    request: Request,
     task_id: int,
     user_id: int = Query(1),
     db: AsyncSession = Depends(get_db),
@@ -97,10 +108,37 @@ async def get_remake_status(
     task = result.scalar_one_or_none()
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    output_data = dict(task.output_data) if isinstance(task.output_data, dict) else {}
+    if output_data.get("video_path") and os.path.exists(str(output_data["video_path"])):
+        output_data["video_url"] = str(request.url_for("download_remake_video", task_id=task_id))
+    else:
+        fallback = os.path.join(settings.output_dir, "tasks", str(task_id), "swapped_video.mp4")
+        if os.path.exists(fallback):
+            output_data["video_url"] = str(request.url_for("download_remake_video", task_id=task_id))
+
     return {
         "task_id": task_id,
         "status": task.status.value,
         "progress": task.progress,
-        "output_data": task.output_data,
+        "output_data": output_data,
         "error_message": task.error_message,
     }
+
+
+@router.get("/remake/{task_id}/download")
+async def download_remake_video(
+    task_id: int,
+    user_id: int = Query(1),
+    db: AsyncSession = Depends(get_db),
+):
+    q = select(Task).where(Task.id == task_id, Task.user_id == user_id)
+    result = await db.execute(q)
+    task = result.scalar_one_or_none()
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    video_path = (task.output_data or {}).get("video_path", "")
+    raw_output = task.output_data
+    video_path = raw_output.get("video_path", "") if isinstance(raw_output, dict) else ""
+    if not video_path or not os.path.exists(video_path):
+        raise HTTPException(status_code=404, detail="Video file not found")
+    return FileResponse(video_path, media_type="video/mp4", filename=os.path.basename(video_path))

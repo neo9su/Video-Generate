@@ -43,31 +43,15 @@ class FaceSwapService:
         enhancer: bool = True,
         enhancer_blend: int = 80,
     ) -> str:
-        """Swap face in target video with source face image.
-
-        Args:
-            source_face_path: Path to the face image to use as replacement.
-            target_video_path: Path to the video where faces will be swapped.
-            output_path: Where to save the output video.
-            enhancer: Whether to apply face enhancement (GFPGAN).
-            enhancer_blend: Enhancement blend strength (0-100).
-
-        Returns:
-            Path to the output video with swapped faces.
-        """
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
         job_id = str(uuid.uuid4())[:8]
         remote_job_dir = f"{self.REMOTE_DIR}/jobs/{job_id}"
 
         try:
-            # Create remote job directory
             await self._ssh(f"mkdir -p {remote_job_dir}")
-
-            # Upload files to server
             await self._upload(source_face_path, f"{remote_job_dir}/source.png")
             await self._upload(target_video_path, f"{remote_job_dir}/target.mp4")
 
-            # Build facefusion command
             processors = "face_swapper"
             extra_args = ""
             if enhancer:
@@ -87,29 +71,25 @@ class FaceSwapService:
                 f"--face-selector-mode many "
                 f"--output-video-encoder libx264 "
                 f"--output-video-quality 85 "
-                f"--execution-providers cuda"
+                f"--execution-providers cuda "
+                f"--execution-device-ids 0 "
+                f"--execution-thread-count 2 "
                 f"{extra_args}"
             )
 
             print(f"[FaceSwap] Running job {job_id}...")
             result = await self._ssh_conda(cmd)
 
-            # Check if output exists
             check = await self._ssh(f"ls -la {remote_job_dir}/output.mp4 2>/dev/null")
             if "output.mp4" not in check:
                 raise RuntimeError(f"FaceFusion output not found. Log: {result[-500:]}")
 
-            # Download result
             await self._download(f"{remote_job_dir}/output.mp4", output_path)
             print(f"[FaceSwap] Done! Output: {output_path}")
-
-            # Cleanup remote files
             await self._ssh(f"rm -rf {remote_job_dir}")
-
             return output_path
 
         except Exception as e:
-            # Cleanup on failure
             await self._ssh(f"rm -rf {remote_job_dir}")
             raise RuntimeError(f"Face swap failed: {e}")
 
@@ -119,17 +99,7 @@ class FaceSwapService:
         prompt: str = "",
         output_path: str = "",
     ) -> str:
-        """Generate a synthetic face using SiliconFlow image API.
-
-        Args:
-            reference_image_path: Optional reference face to guide generation.
-            prompt: Text description of desired face appearance.
-            output_path: Where to save the generated face image.
-
-        Returns:
-            Path to the generated face image.
-        """
-        import httpx
+        from .image_generation_service import image_gen_service
 
         if not prompt:
             prompt = (
@@ -138,41 +108,30 @@ class FaceSwapService:
                 "soft studio lighting, white background, photorealistic, "
                 "face clearly visible front-facing, high quality"
             )
-
         if not output_path:
             output_path = os.path.join(
                 settings.output_dir, "faces", f"gen_face_{uuid.uuid4().hex[:8]}.png"
             )
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.post(
-                "https://api.siliconflow.cn/v1/images/generations",
-                headers={
-                    "Authorization": f"Bearer {settings.siliconflow_api_key}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "Tongyi-MAI/Z-Image-Turbo",
-                    "prompt": prompt,
-                    "image_size": "1024x1024",
-                },
-            )
-            if resp.status_code != 200:
-                raise RuntimeError(f"Image gen failed: {resp.status_code} {resp.text[:200]}")
-
-            data = resp.json()
-            image_url = data["images"][0]["url"]
-
-            # Download generated image
-            img_resp = await client.get(image_url)
-            with open(output_path, "wb") as f:
-                f.write(img_resp.content)
-
+        face_negative = (
+            "nsfw, ugly, deformed, text, watermark, signature, logo, "
+            "low quality, blurry, distorted, bad anatomy, extra limbs, "
+            "disfigured, glasses, hat, mask, obscured face, multiple faces, "
+            "looking away, eyes closed, extreme makeup, cartoon, painting"
+        )
+        await image_gen_service.generate_scene_image(
+            prompt=prompt,
+            output_path=output_path,
+            negative_prompt=face_negative,
+            width=512,
+            height=768,
+            steps=30,
+            cfg_scale=6.0,
+        )
         return output_path
 
     async def _ssh(self, cmd: str) -> str:
-        """Execute SSH command on GPU server."""
         proc = await asyncio.create_subprocess_exec(
             "ssh", self.GPU_HOST, cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -182,8 +141,8 @@ class FaceSwapService:
         return stdout.decode() + stderr.decode()
 
     async def _ssh_conda(self, cmd: str) -> str:
-        """Execute SSH command with conda env activated."""
-        full_cmd = f"{self.CONDA_ACTIVATE} && {cmd}"
+        """Execute SSH command with conda env activated (uses GPU 1 for CUDA)."""
+        full_cmd = f"export CUDA_VISIBLE_DEVICES=1 && {self.CONDA_ACTIVATE} && {cmd}"
         proc = await asyncio.create_subprocess_exec(
             "ssh", self.GPU_HOST, full_cmd,
             stdout=asyncio.subprocess.PIPE,
@@ -193,7 +152,6 @@ class FaceSwapService:
         return stdout.decode() + stderr.decode()
 
     async def _upload(self, local_path: str, remote_path: str):
-        """Upload file to GPU server via cat pipe (avoids SCP security scanner)."""
         proc = await asyncio.create_subprocess_shell(
             f'cat "{local_path}" | ssh {self.GPU_HOST} "cat > {remote_path}"',
             stdout=asyncio.subprocess.PIPE,
@@ -204,7 +162,6 @@ class FaceSwapService:
             raise RuntimeError(f"Upload failed: {local_path} -> {remote_path}")
 
     async def _download(self, remote_path: str, local_path: str):
-        """Download file from GPU server."""
         proc = await asyncio.create_subprocess_shell(
             f'ssh {self.GPU_HOST} "cat {remote_path}" > "{local_path}"',
             stdout=asyncio.subprocess.PIPE,
@@ -215,7 +172,6 @@ class FaceSwapService:
             raise RuntimeError(f"Download failed: {remote_path} -> {local_path}")
 
     async def check_connectivity(self) -> bool:
-        """Check if GPU server is reachable and FaceFusion is available."""
         try:
             result = await self._ssh_conda(
                 f"cd {self.REMOTE_DIR} && python -c "
@@ -226,5 +182,4 @@ class FaceSwapService:
             return False
 
 
-# Singleton
 face_swap_service = FaceSwapService()

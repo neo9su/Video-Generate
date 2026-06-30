@@ -1,10 +1,14 @@
 """FastAPI entry point for Video-Generate backend."""
+import os
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .database import engine, Base
 from .routers import auth, tasks, videos, voices, prompts, health, analysis
 from .routers import admin, api_keys, webhooks, billing
 from .routers import remake
+from .routers import watermark
 from .middleware import RateLimitMiddleware
 
 app = FastAPI(
@@ -15,8 +19,16 @@ app = FastAPI(
 
 # Middleware
 app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.add_middleware(
     RateLimitMiddleware,
-    default_limit=60,
+    default_limit=600,
     window_seconds=60,
 )
 
@@ -37,6 +49,9 @@ app.include_router(billing.router, prefix="/api/v1/billing", tags=["billing"])
 
 # Path B: Face swap + voice clone
 app.include_router(remake.router, prefix="/api/v1/remake", tags=["remake"])
+app.include_router(watermark.router, prefix="/api/v1/watermark", tags=["watermark"])
+os.makedirs(settings.output_dir, exist_ok=True)
+app.mount("/api/v1/files", StaticFiles(directory=settings.output_dir), name="files")
 
 
 @app.on_event("startup")

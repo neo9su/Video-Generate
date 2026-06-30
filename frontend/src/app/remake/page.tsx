@@ -21,8 +21,9 @@ import {
   ToggleRight,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
+import WatermarkStep from '@/components/WatermarkStep'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://10.190.0.222:8000/api/v1'
 
 interface RemakeTaskStatus {
   task_id: string
@@ -37,6 +38,7 @@ interface RemakeTaskStatus {
 }
 
 export default function RemakePage() {
+  const [watermarkData, setWatermarkData] = useState<any>(null)
   // File states
   const [originalVideo, setOriginalVideo] = useState<File | null>(null)
   const [originalVideoUrl, setOriginalVideoUrl] = useState<string | null>(null)
@@ -214,6 +216,9 @@ export default function RemakePage() {
       formData.append('narration_text', narrationText)
       formData.append('enhance_face', String(enhanceFace))
       formData.append('user_id', '1') // TODO: get from auth context
+      if (watermarkData) {
+        formData.append('watermark_data', JSON.stringify(watermarkData))
+      }
 
       const res = await fetch(`${API_BASE_URL}/remake/remake`, {
         method: 'POST',
@@ -351,6 +356,14 @@ export default function RemakePage() {
               className="hidden"
             />
           </section>
+
+          {originalVideo && (
+          <WatermarkStep
+            videoPath={originalVideo.name}
+            apiBaseUrl={API_BASE_URL}
+            onDone={setWatermarkData}
+          />
+          )}
 
           {/* Step 2: Source Face */}
           <section className="glass-card p-6">

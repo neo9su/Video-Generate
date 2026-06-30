@@ -1,6 +1,6 @@
 import axios, { AxiosInstance, AxiosProgressEvent } from 'axios'
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://10.190.0.222:8000/api/v1'
 
 let authToken: string | null = null
 
@@ -156,8 +156,14 @@ export async function createTask(data: CreateTaskPayload) {
 }
 
 export async function getTasks(params?: TasksQueryParams) {
-  const { data } = await api.get<PaginatedResponse<Task>>('/tasks', { params })
-  return data
+  const { data } = await api.get('/tasks', { params })
+  return {
+    items: data.tasks || data.items || [],
+    total: data.total || 0,
+    page: params?.page || 1,
+    limit: params?.limit || 20,
+    pages: Math.ceil((data.total || 0) / (params?.limit || 20)),
+  }
 }
 
 export async function getTask(id: string) {
@@ -413,3 +419,8 @@ export async function getQueueStatus() {
 }
 
 export default api
+// Backward compatibility aliases
+export type TaskResponse = Task
+export type VoiceResponse = Voice
+export const listTasks = getTasks
+export const listVoices = getVoices

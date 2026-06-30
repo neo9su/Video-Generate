@@ -12,10 +12,39 @@ def _run_async(coro):
         loop.close()
 
 
+async def _save_tts(text: str, output_path: str, target_duration: float):
+    """Fallback TTS: generate voice via tts_service and save to file."""
+    from ...services.tts_service import tts_service
+    import subprocess, json
+
+    audio_data = await tts_service.generate_voice(text)
+    with open(output_path, "wb") as f:
+        f.write(audio_data)
+
+    # Adjust duration to match target if needed
+    dur = await _get_duration(output_path)
+    if dur > 0 and target_duration > 0 and abs(dur - target_duration) > 1.0:
+        tempo = max(0.5, min(100.0, dur / target_duration))
+        tmp = output_path + ".tmp.wav"
+        subprocess.run(["ffmpeg", "-y", "-i", output_path, "-filter:a", f"atempo={tempo:.4f}", tmp],
+                       capture_output=True)
+        os.replace(tmp, output_path)
+
+
+async def _get_duration(path: str) -> float:
+    import subprocess, json
+    r = subprocess.run(["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", path],
+                       capture_output=True, text=True)
+    try:
+        return float(json.loads(r.stdout)["format"]["duration"])
+    except Exception:
+        return 0.0
+
+
 @celery_app.task(bind=True, max_retries=1, time_limit=1800, soft_time_limit=1740)
 def run_video_remake(self, task_id: int, user_id: int = 1):
     """Run Path B: face swap + TTS re-narration.
-    
+
     Time limit: 30 minutes (full video face swap can take 10-15 min).
     """
     return _run_async(_remake_async(self, task_id, user_id))
@@ -27,7 +56,8 @@ async def _remake_async(self, task_id: int, user_id: int):
     from ...models.task import Task, TaskStatus
     from ...config import settings
     from ...services.face_swap_service import face_swap_service
-    from ...services.voice_clone_service import voice_clone_service, edge_tts_fallback
+    from ...services.voice_clone_service import voice_clone_service
+    from ...services.tts_service import tts_service
     import subprocess
     import json
 
@@ -91,9 +121,9 @@ async def _remake_async(self, task_id: int, user_id: int):
                             target_duration=video_duration,
                         )
                     else:
-                        await edge_tts_fallback(narration_text, voice_path, video_duration)
+                        await _save_tts(narration_text, voice_path, video_duration)
                 except Exception:
-                    await edge_tts_fallback(narration_text, voice_path, video_duration)
+                    await _save_tts(narration_text, voice_path, video_duration)
 
                 od["narration_audio"] = voice_path
                 task.progress = 85

@@ -8,8 +8,8 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # LLM / AI
-    llm_api_key: str = "sk-orx-EATWLx2onAWQfkJpRj5zOhluXYACY5hm"
-    llm_api_url: str = "http://10.190.0.214:8080/v1"
+    llm_api_key: str = "sk-hermes-5c187a6835e176ab53fd7f082f2c64bb4e32d197f8d47c7b"
+    llm_api_url: str = "http://10.190.0.214:3000/v1"
     llm_model: str = "deepseek-v4-pro"
 
     # External services
